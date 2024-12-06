@@ -1,0 +1,56 @@
+from flask import jsonify
+from google.cloud import storage
+import google.generativeai as genai
+import os
+
+# Configure Gemini
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Google Cloud Storage client
+storage_client = storage.Client()
+
+def hello_http(request):
+    """
+    Cloud Function entry point. Handles HTTP requests for Gemini-based classification tasks.
+    """
+    # Health check
+    if request.method == 'GET':
+        return jsonify({"status": "healthy"})
+
+    # Trigger Gemini task on POST request
+    elif request.method == 'POST':
+        request_json = request.get_json(silent=True)
+        if not request_json:
+            return jsonify({"error": "No JSON body found in the request."}), 400
+
+        bucket_name = request_json.get('bucket_name')
+        destination_bucket_name = request_json.get('destination_bucket_name')
+
+        if not bucket_name or not destination_bucket_name:
+            return jsonify({"error": "Missing 'bucket_name' or 'destination_bucket_name' in the request."}), 400
+
+        # Access the source and destination buckets
+        source_bucket = storage_client.bucket(bucket_name)
+        destination_bucket = storage_client.bucket(destination_bucket_name)
+
+        moved_files = []
+
+        for blob in source_bucket.list_blobs():
+            if blob.name.endswith(".txt"):
+                # Download file content
+                content = blob.download_as_text()
+
+                # Use Gemini to classify the content
+                response = genai.analyze_text(content)  # Replace with the correct Gemini method
+                if "Politics" in response.categories:
+                    # Upload the file to the destination bucket
+                    destination_blob = destination_bucket.blob(blob.name)
+                    destination_blob.upload_from_string(content)
+                    moved_files.append(blob.name)
+
+        return jsonify({
+            "message": "Gemini task completed successfully",
+            "moved_files": moved_files
+        }), 200
+
+    return jsonify({"error": "Invalid HTTP method. Only GET and POST are supported."}), 405
